@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -165,6 +166,7 @@ func main() {
 		rwatcher.AddRecursive(*flagWatchDir)
 
 		go func() {
+			lastChangeDetected := time.Now()
 		watchLoop:
 			for {
 				select {
@@ -184,6 +186,19 @@ func main() {
 					}
 
 					if watchPattern.MatchString(event.Name) {
+
+						// HACK: we need to do some de-bouncing here.
+						// On Windows I'm getting a WRITE on startup for every file, plus
+						// file edits are resulting in two WRITE events per file.  Not
+						// sure what's causing it but we need it to chill out for this to
+						// be workable.
+						if time.Since(lastChangeDetected) < time.Second*4 {
+							if *flagV {
+								log.Printf("watcher: %q %v, change detected too quickly, debouncing", event.Name, event.Op)
+							}
+							continue watchLoop
+						}
+						lastChangeDetected = time.Now()
 
 						if *flagV {
 							log.Printf("watcher: %q %v, rebuilding and restarting...", event.Name, event.Op)

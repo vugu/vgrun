@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -134,7 +135,7 @@ func (ru *runner) run() error {
 			// 	args = append(args, ru.args...)
 			// 	cmd = exec.Command("go", args...)
 			// } else {
-			cmd = exec.Command(filepath.Join(ru.binDir, strings.TrimSuffix(filepath.Base(ru.buildTarget), ".go")), ru.args...)
+			cmd = exec.Command(filepath.Join(ru.binDir, strings.TrimSuffix(filepath.Base(ru.buildTarget), ".go")+exeSuffix()), ru.args...)
 			// }
 			ru.cmd = cmd
 
@@ -254,9 +255,9 @@ func (ru *runner) generateAndBuild() (reterr error) {
 	outBase := strings.TrimSuffix(filepath.Base(ru.buildTarget), ".go")
 	var cmd *exec.Cmd
 	if filepath.Ext(ru.buildTarget) == ".go" {
-		cmd = exec.Command("go", "build", "-o", filepath.Join(absBinDir, outBase), ru.buildTarget) // .go file
+		cmd = exec.Command("go", "build", "-o", filepath.Join(absBinDir, outBase)+exeSuffix(), ru.buildTarget) // .go file
 	} else {
-		cmd = exec.Command("go", "build", "-o", filepath.Join(absBinDir, outBase)) // package
+		cmd = exec.Command("go", "build", "-o", filepath.Join(absBinDir, outBase)+exeSuffix()) // package
 		cmd.Dir, err = filepath.Abs(ru.buildTarget)
 		if err != nil {
 			return fmt.Errorf("Unable to translate %q to an absolute path: %w", ru.buildTarget, err)
@@ -323,6 +324,13 @@ reportErr:
 			log.Printf("Process exited cleanly")
 		}
 	}
+}
+
+func exeSuffix() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
 }
 
 // func (ru *runner) runLoop() error {
