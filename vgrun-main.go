@@ -35,13 +35,21 @@ func main() {
 	if *flagInstallTools {
 
 		log.Printf("Installing vugugen")
-		b, err := exec.Command("go", "install", "-x", "github.com/vugu/vugu/cmd/vugugen").CombinedOutput()
+		b, err := exec.Command("go", "get", "-u", "github.com/vugu/vugu/cmd/vugugen").CombinedOutput()
+		if err != nil {
+			log.Fatalf("Error installing vugugen: %v; full output:\n%s", err, b)
+		}
+		b, err = exec.Command("go", "install", "github.com/vugu/vugu/cmd/vugugen").CombinedOutput()
 		if err != nil {
 			log.Fatalf("Error installing vugugen: %v; full output:\n%s", err, b)
 		}
 
 		log.Printf("Installing vgrgen")
-		b, err = exec.Command("go", "install", "-x", "github.com/vugu/vgrouter/cmd/vgrgen").CombinedOutput()
+		b, err = exec.Command("go", "get", "-u", "github.com/vugu/vgrouter/cmd/vgrgen").CombinedOutput()
+		if err != nil {
+			log.Fatalf("Error: %v; full output:\n%s", err, b)
+		}
+		b, err = exec.Command("go", "install", "github.com/vugu/vgrouter/cmd/vgrgen").CombinedOutput()
 		if err != nil {
 			log.Fatalf("Error: %v; full output:\n%s", err, b)
 		}
