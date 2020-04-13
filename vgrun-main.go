@@ -99,7 +99,7 @@ func main() {
 			cloneURL = "https://github.com/vugu-examples/" + cloneURL
 		}
 		cmdline := []string{
-			"git", "clone", "--depth=1", cloneURL, rawDir,
+			"git", "clone", "-q", "--depth=1", cloneURL, rawDir,
 		}
 		log.Printf("Running command: %v", cmdline)
 
