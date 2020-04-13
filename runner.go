@@ -119,8 +119,8 @@ func (ru *runner) run() error {
 		if cmd != nil {
 			if *flagV {
 				log.Printf("about to perform gracefulStop on pid=%v", cmd.Process.Pid)
-				gracefulStop(cmd.Process, cmdErrCh, time.Second*10)
 			}
+			gracefulStop(cmd.Process, cmdErrCh, time.Second*10)
 		}
 
 		{
