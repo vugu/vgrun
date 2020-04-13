@@ -106,8 +106,19 @@ func (ar *autoReloader) serveJS(w http.ResponseWriter, r *http.Request) {
 			}
 			// must be different pid
 			pid = data.pid;
-			console.log("auto-reload reloading for pid ", pid)
-			window.location.reload();
+			console.log("auto-reload initiated for for pid ", pid)
+			// check that the server is alive again before reloading
+			// TODO: clean this up
+			setInterval(function() {
+				fetch("//`+r.Host+`/auto-reload.js",{mode:'no-cors'}).then(function(r) {
+					// if the server is down we don't get a response at all
+					// and this function is never invoked, so getting here should be good
+					//console.log("resback:", r);
+					//if (r.ok) {
+						window.location.reload();
+					//}
+				});
+			}, 750)
 		}
 
 		sock.onclose = function(e) {
