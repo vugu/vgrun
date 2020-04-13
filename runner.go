@@ -94,9 +94,9 @@ func (ru *runner) run() error {
 		if err != nil {
 			// on error if process not running, exit
 			if cmd == nil {
-				return err
+				return fmt.Errorf("initial build error: %w", err)
 			}
-			log.Printf("generate or build failure:\n%s", err)
+			log.Printf("generate or build failure:\n%v", err)
 			// if process still running but generateAndBuild failed, we skip over the process start
 			// and just wait for events again
 
@@ -117,7 +117,10 @@ func (ru *runner) run() error {
 
 		// build was successful, we now need to stop the prior running process if applicable
 		if cmd != nil {
-			gracefulStop(cmd.Process, cmdErrCh, time.Second*10)
+			if *flagV {
+				log.Printf("about to perform gracefulStop on pid=%v", cmd.Process.Pid)
+				gracefulStop(cmd.Process, cmdErrCh, time.Second*10)
+			}
 		}
 
 		{
@@ -192,7 +195,10 @@ func (ru *runner) run() error {
 		// process exited on it's own
 		case err := <-cmdErrCh:
 			// we always just exit in this case
-			return err
+			// if *flagV {
+			// 	log.Printf("Process exited by itself: %v", err)
+			// }
+			return fmt.Errorf("Unexpected process exit: %w", err)
 		}
 
 	}
@@ -201,13 +207,26 @@ func (ru *runner) run() error {
 
 }
 
-func (ru *runner) generateAndBuild() error {
+func (ru *runner) generateAndBuild() (reterr error) {
+
+	if *flagV {
+		log.Printf("Running generateAndBuild")
+		defer func() {
+			log.Printf("Exiting generateAndBuild (err=%v)", reterr)
+		}()
+	}
 
 	if ru.generateDir != "" {
 		cmd := exec.Command("go", "generate")
 		cmd.Dir = ru.generateDir
+		if *flagV {
+			log.Printf("About to execute go: %v", cmd.Args)
+		}
 		b, err := cmd.CombinedOutput()
 		if err != nil {
+			if *flagV {
+				log.Printf("generateAndBuild error: %v", err)
+			}
 			return fmt.Errorf("generate error: %w; full output:\n%s", err, b)
 		}
 	}
@@ -223,6 +242,9 @@ func (ru *runner) generateAndBuild() error {
 
 	absBinDir, err := filepath.Abs(ru.binDir)
 	if err != nil {
+		if *flagV {
+			log.Printf("generateAndBuild filepath.Abs(ru.binDir) error: %v", err)
+		}
 		return err
 	}
 
@@ -235,10 +257,19 @@ func (ru *runner) generateAndBuild() error {
 		cmd = exec.Command("go", "build", "-o", filepath.Join(absBinDir, outBase), ru.buildTarget) // .go file
 	} else {
 		cmd = exec.Command("go", "build", "-o", filepath.Join(absBinDir, outBase)) // package
-		cmd.Dir = ru.buildTarget
+		cmd.Dir, err = filepath.Abs(ru.buildTarget)
+		if err != nil {
+			return fmt.Errorf("Unable to translate %q to an absolute path: %w", ru.buildTarget, err)
+		}
+	}
+	if *flagV {
+		log.Printf("About to execute go: %v (dir=%v)", cmd.Args, cmd.Dir)
 	}
 	b, err := cmd.CombinedOutput()
 	if err != nil {
+		if *flagV {
+			log.Printf("generateAndBuild go build error: %v", err)
+		}
 		return fmt.Errorf("build error: %w; full output:\n%s", err, b)
 	}
 

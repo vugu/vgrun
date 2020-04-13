@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -18,9 +19,14 @@ type RWatcher struct {
 	Events chan fsnotify.Event
 	Errors chan error
 	*fsnotify.Watcher
-	stop   chan struct{}
-	rpaths []string
-	rwmu   sync.RWMutex
+	stop            chan struct{}
+	rpaths          []string
+	excludePatterns []*regexp.Regexp
+	rwmu            sync.RWMutex
+}
+
+var defaultExcludePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\.git`),
 }
 
 // NewRWatcher returns a new instance.
@@ -34,10 +40,11 @@ func NewRWatcher() (*RWatcher, error) {
 	events := make(chan fsnotify.Event, len(w.Events))
 
 	rw := &RWatcher{
-		Watcher: w,
-		Errors:  w.Errors,
-		Events:  events,
-		stop:    stop,
+		Watcher:         w,
+		Errors:          w.Errors,
+		Events:          events,
+		stop:            stop,
+		excludePatterns: defaultExcludePatterns,
 	}
 
 	go func() {
@@ -157,8 +164,16 @@ func (rw *RWatcher) AddRecursive(name string) error {
 		if err != nil {
 			return err
 		}
+		// bail on anything that matches the exclude patterns
+		for _, re := range defaultExcludePatterns {
+			if re.MatchString(fpath) {
+				return nil
+			}
+		}
 		if info.IsDir() {
-			// log.Printf("RWatcher adding: %s", fpath)
+			if *flagV {
+				log.Printf("RWatcher adding: %s", fpath)
+			}
 			return rw.Add(fpath)
 		}
 		return nil
