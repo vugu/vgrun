@@ -2,11 +2,13 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -16,13 +18,13 @@ var flagV = flag.Bool("v", false, "Verbose output")
 func main() {
 
 	// TODO: set flag.Usage
-	// TODO: verbose flag
 	flagInstallTools := flag.Bool("install-tools", false, "Installs common Vugu tools using `go install`")
 	flagNoGenerate := flag.Bool("no-generate", false, "Disable `go generate`")
 	flagBinDir := flag.String("bin-dir", "bin", "Directory of where to place built binary")
 	flag1 := flag.Bool("1", false, "Run only once and exit after")
 	flagAutoReloadAt := flag.String("auto-reload-at", "localhost:8324", "Run auto-reload server using this listener.  An empty string will disable it.")
 	flagNewFromExample := flag.String("new-from-example", "", "Initialize a new project from example.  Will git clone from github.com/vugu-examples/[value] or if value contains a slash it will be treated as a full URL sent to git clone.  Must be followed by empty or non existent target directory.")
+	flagKeepGit := flag.Bool("keep-git", false, "With new-from-example causes the .git folder to not be removed after cloning")
 	flagWatchPattern := flag.String("watch-pattern", "\\.vugu$", "Sets the regexp pattern of files to watch")
 	flagWatchDir := flag.String("watch-dir", ".", "Specifies which directory to watch from")
 	flag.Parse()
@@ -30,17 +32,16 @@ func main() {
 	// build directory (and exe name) is first and only arg; or if it ends with .go then that file
 	// is run with `go run`; for now no default behavior, no arg is an error
 
-	// TODO: what about something like:
-	// vgrun server -some-server-opt
-
 	if *flagInstallTools {
 
+		log.Printf("Installing vugugen")
 		b, err := exec.Command("go", "install", "-x", "github.com/vugu/vugu/cmd/vugugen").CombinedOutput()
 		if err != nil {
 			log.Fatalf("Error installing vugugen: %v; full output:\n%s", err, b)
 		}
 
-		b, err = exec.Command("go", "install", "-x", "https://github.com/vugu/vgrouter/cmd/vgrgen").CombinedOutput()
+		log.Printf("Installing vgrgen")
+		b, err = exec.Command("go", "install", "-x", "github.com/vugu/vgrouter/cmd/vgrgen").CombinedOutput()
 		if err != nil {
 			log.Fatalf("Error: %v; full output:\n%s", err, b)
 		}
@@ -49,7 +50,80 @@ func main() {
 	}
 
 	if *flagNewFromExample != "" {
-		panic(fmt.Errorf("not yet implemented"))
+
+		args := flag.Args()
+		if len(args) != 1 {
+			log.Fatalf("Missing path: You must provide exactly one argument which is the directory to put files in.")
+		}
+		rawDir := args[0]
+		dir, err := filepath.Abs(rawDir)
+		if err != nil {
+			log.Fatal(err)
+		}
+		st, err := os.Stat(dir)
+		if os.IsNotExist(err) { // if not exist, create it
+			err := os.Mkdir(dir, 0755)
+			if err != nil {
+				log.Fatalf("Error creating directory %q: %v", dir, err)
+			}
+			goto dirExists
+		} else if err != nil { // some other weird thing like no perms or fs funk
+			log.Fatalf("Failed to stat dir %q: %v", dir, err)
+		}
+		if !st.IsDir() {
+			log.Fatalf("Target path %q is not a directory", dir)
+		}
+	dirExists:
+		dirf, err := os.Open(dir)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer dirf.Close()
+		names, err := dirf.Readdirnames(-1)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, name := range names {
+			if name == "." {
+				continue
+			}
+			if name == ".." {
+				continue
+			}
+			log.Fatalf("Directory %q is not empty (found %q)", dir, name)
+		}
+
+		// whew... finally, directory exists and is empty, let's get to work
+		cloneURL := *flagNewFromExample
+		if !strings.Contains(cloneURL, "/") { // if no slashes then we assume it's the name of a vugu example
+			cloneURL = "https://github.com/vugu-examples/" + cloneURL
+		}
+		cmdline := []string{
+			"git", "clone", "--depth=1", cloneURL, rawDir,
+		}
+		log.Printf("Running command: %v", cmdline)
+
+		cmd := exec.Command(cmdline[0], cmdline[1:]...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		err = cmd.Start()
+		if err != nil {
+			log.Fatalf("Error starting clone: %v", err)
+		}
+		err = cmd.Wait()
+		if err != nil {
+			log.Fatalf("Clone failed with: %v", err)
+		}
+
+		if !*flagKeepGit {
+			log.Printf("Removing .git directory from example")
+			err := os.RemoveAll(filepath.Join(dir, ".git"))
+			if err != nil {
+				log.Fatalf("Error while removing .git directory: %v", err)
+			}
+		}
+		return
 	}
 
 	args := flag.Args()
@@ -65,19 +139,6 @@ func main() {
 	}
 	ru.buildTarget = args[0]
 	ru.args = args[1:]
-
-	// // only one run requested
-	// if *flag1 {
-	// 	err := ru.generateAndBuild()
-	// 	if err != nil {
-	// 		log.Fatal(err)
-	// 	}
-	// 	err = ru.runOnce()
-	// 	if err != nil {
-	// 		log.Fatal(err)
-	// 	}
-	// 	return
-	// }
 
 	ar := newAutoReloader()
 	ru.setPider = ar
@@ -153,28 +214,6 @@ func main() {
 							}
 						}
 
-						// err := ru.generateAndBuild()
-						// if err != nil {
-						// 	log.Printf("generate/build error: %v", err)
-						// 	break
-						// }
-
-						// err = ru.restart()
-						// if err != nil {
-						// 	log.Printf("restart error: %v", err)
-						// 	break
-						// }
-
-						// let's give the process just a real brief moment to fire up the webserver
-						// time.Sleep(time.Millisecond * 200)
-
-						// tell the browser to refresh
-						// FIXME: this should be protected by a mutex
-						// if ru.cmd != nil && ru.cmd.Process != nil {
-						// 	// ar.push([]byte(fmt.Sprintf(`{"type":"exec","pid":%v}`, ru.cmd.Process.Pid)))
-						// 	ar.setPid(ru.cmd.Process.Pid)
-						// }
-
 						// drain the channel to len 0 before continuing - we don't want a bunch of
 						// file change events stacked up while we were waiting for the build
 						for len(rwatcher.Events) > 0 {
@@ -203,27 +242,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// var wa watcher
-	// wa.watchDir = *flagWatchDir
-	// wa.watchPattern = regexp.MustCompile(*flagWatchPattern)
-
-	// do generate and build
-
-	// start file watcher if requested
-
-	// run the executable
-
-	// do the generate
-
-	// // see if this is a go file, e.g. vgrun devserver.go
-	// if path.Ext(args[0]) == ".go" {
-	// 	// go run
-	// }
-
-	// go build
-
-	// then execute file
 
 }
 
