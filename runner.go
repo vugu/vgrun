@@ -199,7 +199,10 @@ func (ru *runner) run() error {
 			// if *flagV {
 			// 	log.Printf("Process exited by itself: %v", err)
 			// }
-			return fmt.Errorf("Unexpected process exit: %w", err)
+			if err != nil {
+				return fmt.Errorf("Unexpected process exit: %w", err)
+			}
+			return err
 		}
 
 	}
