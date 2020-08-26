@@ -35,22 +35,34 @@ func main() {
 
 	if *flagInstallTools {
 
+		var cmd *exec.Cmd
+		env := os.Environ()
+		env = append(env, "GO111MODULE=auto")
+
 		log.Printf("Installing vugugen")
-		b, err := exec.Command("go", "get", "-u", "github.com/vugu/vugu/cmd/vugugen").CombinedOutput()
+		cmd = exec.Command("go", "get", "-u", "github.com/vugu/vugu/cmd/vugugen")
+		cmd.Env = env
+		b, err := cmd.CombinedOutput()
 		if err != nil {
 			log.Fatalf("Error installing vugugen: %v; full output:\n%s", err, b)
 		}
-		b, err = exec.Command("go", "install", "github.com/vugu/vugu/cmd/vugugen").CombinedOutput()
+		cmd = exec.Command("go", "install", "github.com/vugu/vugu/cmd/vugugen")
+		cmd.Env = env
+		b, err = cmd.CombinedOutput()
 		if err != nil {
 			log.Fatalf("Error installing vugugen: %v; full output:\n%s", err, b)
 		}
 
 		log.Printf("Installing vgrgen")
-		b, err = exec.Command("go", "get", "-u", "github.com/vugu/vgrouter/cmd/vgrgen").CombinedOutput()
+		cmd = exec.Command("go", "get", "-u", "github.com/vugu/vgrouter/cmd/vgrgen")
+		cmd.Env = env
+		b, err = cmd.CombinedOutput()
 		if err != nil {
 			log.Fatalf("Error: %v; full output:\n%s", err, b)
 		}
-		b, err = exec.Command("go", "install", "github.com/vugu/vgrouter/cmd/vgrgen").CombinedOutput()
+		cmd = exec.Command("go", "install", "github.com/vugu/vgrouter/cmd/vgrgen")
+		cmd.Env = env
+		b, err = cmd.CombinedOutput()
 		if err != nil {
 			log.Fatalf("Error: %v; full output:\n%s", err, b)
 		}
