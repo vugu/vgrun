@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: ['1.14', '1.18'] # run tests on min/max supported versions
+    env:
+      GO111MODULE: "on"
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: ${{ matrix.go }}
+
+    - name: Run tests
+      run: go test -v ./...
+
+  install:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # make sure vgrun can be installed on all supported platforms.
+        go: ['1.14', '1.15', '1.16', '1.17', '1.18']
+        os: ['ubuntu-latest', 'windows-latest', 'macos-latest']
+    env:
+      GO111MODULE: "on"
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: ${{ matrix.go }}
+
+    - name: Install vgrun
+      run: go install .
+
+    - name: Install tools
+      run: vgrun -install-tools
+ 
