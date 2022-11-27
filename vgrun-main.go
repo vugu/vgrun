@@ -18,6 +18,9 @@ var flagV = flag.Bool("v", false, "Verbose output")
 
 func main() {
 
+	var watchedFilesModTime = make(map[string]time.Time) // track actual last-modified-time to debounce WRITE events
+	// Windows, at least, fires spurious WRITE events during build process
+
 	// TODO: set flag.Usage
 	flagInstallTools := flag.Bool("install-tools", false, "Installs common Vugu tools using `go install`")
 	flagNoGenerate := flag.Bool("no-generate", false, "Disable `go generate`")
@@ -178,7 +181,7 @@ func main() {
 		rwatcher.AddRecursive(*flagWatchDir)
 
 		go func() {
-			lastChangeDetected := time.Now()
+
 		watchLoop:
 			for {
 				select {
@@ -198,19 +201,34 @@ func main() {
 					}
 
 					if watchPattern.MatchString(event.Name) {
+						var prev_time time.Time // zero value
 
-						// HACK: we need to do some de-bouncing here.
-						// On Windows I'm getting a WRITE on startup for every file, plus
-						// file edits are resulting in two WRITE events per file.  Not
-						// sure what's causing it but we need it to chill out for this to
-						// be workable.
-						if time.Since(lastChangeDetected) < time.Second*4 {
+						kv, ok := watchedFilesModTime[event.Name]
+						if ok {
+							prev_time = kv
+						}
+
+						st, err := os.Stat(event.Name)
+						if err != nil {
 							if *flagV {
-								log.Printf("watcher: %q %v, change detected too quickly, debouncing", event.Name, event.Op)
+								log.Printf("stat error on %q: %v, ignoring event", event.Name, err)
+								continue watchLoop
+							}
+						}
+
+						cur_time := st.ModTime()
+						//if *flagV {
+						//	log.Printf("watcher %q, file modification time %s", event.Name, cur_time)
+						//}
+
+						watchedFilesModTime[event.Name] = cur_time
+
+						if cur_time.Sub(prev_time) <= 0 {
+							if *flagV {
+								log.Printf("watcher: %q %v, ignoring, file modification time didn't increase", event.Name, event.Op)
 							}
 							continue watchLoop
 						}
-						lastChangeDetected = time.Now()
 
 						if *flagV {
 							log.Printf("watcher: %q %v, rebuilding and restarting...", event.Name, event.Op)
@@ -231,11 +249,17 @@ func main() {
 						// read its events until it tells us that it restarted
 					waitRunStateChanges:
 						for rs := range ru.runStateUpdateCh {
-							// log.Printf("runState changed to: %v", rs)
+							if *flagV {
+								log.Printf("runState changed to: %v", rs)
+							}
+
 							switch rs {
 
 							// if rebuild fail we just go back to waiting for events
 							case runStateRebuildFail:
+								if *flagV {
+									log.Printf("DEBUG: Rebuild FAILED, back to watching for changes")
+								}
 								continue watchLoop
 
 							case runStateNone, runStateRebuildSuccess:
@@ -243,6 +267,9 @@ func main() {
 								continue
 
 							case runStateRunning:
+								if *flagV {
+									log.Printf("DEBUG: Rebuild complete, draining backlog then starting watching for changes")
+								}
 								// it's back up, drop through and send message to any browsers listening
 								break waitRunStateChanges
 
@@ -251,6 +278,9 @@ func main() {
 
 						// drain the channel to len 0 before continuing - we don't want a bunch of
 						// file change events stacked up while we were waiting for the build
+						if *flagV {
+							log.Printf("DEBUG: Ignoring %d events queued", len(rwatcher.Events))
+						}
 						for len(rwatcher.Events) > 0 {
 							<-rwatcher.Events
 						}

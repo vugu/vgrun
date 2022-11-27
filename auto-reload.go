@@ -113,10 +113,8 @@ func (ar *autoReloader) serveJS(w http.ResponseWriter, r *http.Request) {
 				fetch("//`+r.Host+`/auto-reload.js",{mode:'no-cors'}).then(function(r) {
 					// if the server is down we don't get a response at all
 					// and this function is never invoked, so getting here should be good
-					//console.log("resback:", r);
-					//if (r.ok) {
+					//console.log("waiting for new server ... resback:", r);
 						window.location.reload();
-					//}
 				});
 			}, 750)
 		}
@@ -185,7 +183,7 @@ func (ar *autoReloader) serveWS(w http.ResponseWriter, r *http.Request) {
 		mt, message, err := c.ReadMessage()
 		if err != nil {
 			if *flagV {
-				log.Println("read error:", err)
+				log.Println("auto-reload: exiting due to read error:", err)
 			}
 			break
 		}

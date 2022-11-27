@@ -48,11 +48,12 @@ func NewRWatcher() (*RWatcher, error) {
 	}
 
 	go func() {
+	egress:
 		for {
 			select {
 
 			case <-stop:
-				break
+				break egress
 
 			case event := <-w.Events:
 
