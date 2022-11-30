@@ -153,8 +153,6 @@ func (ru *runner) run() error {
 				return fmt.Errorf("process start error: %w", err)
 			}
 
-			ru.setState(runStateRunning)
-
 			// whenever we have a new pid, we tell the auto-reloader about it
 			ru.setPider.setPid(cmd.Process.Pid)
 
@@ -169,7 +167,8 @@ func (ru *runner) run() error {
 			}()
 		}
 
-		// TODO: send updates to runStateUpdateCh non-blocking, somewhere...
+		time.Sleep(1 * time.Second)  // let client start refresh
+		ru.setState(runStateRunning) // before host starts listening for source changes again
 
 	waitForIt:
 		select {
