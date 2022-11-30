@@ -63,6 +63,23 @@ func newRunner() *runner {
 	}
 }
 
+// setState updates runner state and notifies any observers via runStateUpdateCh
+// It should never block.  Log a fatal error if the channel ever fills up.
+func (ru *runner) setState(newState runState) {
+	if ru.runState == newState {
+		log.Printf("Runner prev state == requested new state.  State = %v", newState)
+	}
+	if len(ru.runStateUpdateCh) == cap(ru.runStateUpdateCh) {
+		log.Fatalf("State updates channel already full (%d messages), consumer process blocked, exiting",
+			cap(ru.runStateUpdateCh))
+	}
+	ru.runState = newState
+	select { // non-blocking send
+	case ru.runStateUpdateCh <- ru.runState:
+	default:
+	}
+}
+
 // func (ru *runner) isGoRunTarget() bool {
 // 	return filepath.Ext(ru.buildTarget) == ".go"
 // }
@@ -76,12 +93,7 @@ func (ru *runner) run() error {
 	}
 
 	defer func() {
-		ru.runState = runStateNone
-		select { // non-blocking send
-		case ru.runStateUpdateCh <- ru.runState:
-		default:
-		}
-
+		ru.setState(runStateNone)
 	}()
 
 	// keeps track of which command is currently running (if any)
@@ -101,26 +113,18 @@ func (ru *runner) run() error {
 			// if process still running but generateAndBuild failed, we skip over the process start
 			// and just wait for events again
 
-			ru.runState = runStateRebuildFail
-			select { // non-blocking send
-			case ru.runStateUpdateCh <- ru.runState:
-			default:
-			}
+			ru.setState(runStateRebuildFail)
 
 			goto waitForIt
 		}
 
-		ru.runState = runStateRebuildSuccess
-		select { // non-blocking send
-		case ru.runStateUpdateCh <- ru.runState:
-		default:
-		}
+		ru.setState(runStateRebuildSuccess)
 
 		// build was successful, we now need to stop the prior running process if applicable
 		if cmd != nil {
-			if *flagV {
-				log.Printf("about to perform gracefulStop on pid=%v", cmd.Process.Pid)
-			}
+			//if *flagV {
+			//	log.Printf("about to perform gracefulStop on pid=%v", cmd.Process.Pid)
+			//}
 			gracefulStop(cmd.Process, cmdErrCh, time.Second*10)
 		}
 
@@ -149,12 +153,6 @@ func (ru *runner) run() error {
 				return fmt.Errorf("process start error: %w", err)
 			}
 
-			ru.runState = runStateRunning
-			select { // non-blocking send
-			case ru.runStateUpdateCh <- ru.runState:
-			default:
-			}
-
 			// whenever we have a new pid, we tell the auto-reloader about it
 			ru.setPider.setPid(cmd.Process.Pid)
 
@@ -169,7 +167,8 @@ func (ru *runner) run() error {
 			}()
 		}
 
-		// TODO: send updates to runStateUpdateCh non-blocking, somewhere...
+		time.Sleep(1 * time.Second)  // let client start refresh
+		ru.setState(runStateRunning) // before host starts listening for source changes again
 
 	waitForIt:
 		select {
@@ -200,7 +199,7 @@ func (ru *runner) run() error {
 			// 	log.Printf("Process exited by itself: %v", err)
 			// }
 			if err != nil {
-				return fmt.Errorf("Unexpected process exit: %w", err)
+				return fmt.Errorf("unexpected process exit: %w", err)
 			}
 			return err
 		}
@@ -263,7 +262,7 @@ func (ru *runner) generateAndBuild() (reterr error) {
 		cmd = exec.Command("go", "build", "-o", filepath.Join(absBinDir, outBase)+exeSuffix()) // package
 		cmd.Dir, err = filepath.Abs(ru.buildTarget)
 		if err != nil {
-			return fmt.Errorf("Unable to translate %q to an absolute path: %w", ru.buildTarget, err)
+			return fmt.Errorf("unable to translate %q to an absolute path: %w", ru.buildTarget, err)
 		}
 	}
 	if *flagV {
@@ -284,25 +283,30 @@ func (ru *runner) generateAndBuild() (reterr error) {
 // SIGKILL, blocks until ch returns something (process dead)
 func gracefulStop(proc *os.Process, ch chan error, timeout time.Duration) {
 
+	var err error
+
 	if *flagV {
 		log.Printf("gracefulStop running on pid=%v", proc.Pid)
 	}
 
-	err := proc.Signal(os.Interrupt)
-	if err != nil {
-		log.Printf("Signal error: %v", err)
-		goto kill
-	}
+	if runtime.GOOS != "windows" {
+		err = proc.Signal(os.Interrupt)
+		if err != nil {
+			log.Printf("Signal error: %v", err)
+			goto kill
+		}
+		if *flagV {
+			log.Printf("gracefulStop Signal(os.Interrupt) ok, waiting for error from channel")
+		}
 
-	if *flagV {
-		log.Printf("gracefulStop Signal(os.Interrupt) ok, waiting for error from channel")
-	}
-
-	select {
-	case err = <-ch:
-		goto reportErr
-	case <-time.After(timeout):
-		log.Printf("gracefulStop hit timeout")
+		select {
+		case err = <-ch:
+			goto reportErr
+		case <-time.After(timeout):
+			log.Printf("gracefulStop hit timeout")
+			goto kill
+		}
+	} else { // os.Interrupt not supported for Windows?
 		goto kill
 	}
 
@@ -311,7 +315,13 @@ kill:
 	err = proc.Signal(os.Kill)
 	if err != nil {
 		// FIXME: ideally we would make sure this is not an error saying the process already exited
-		panic(err)
+		if runtime.GOOS == "windows" && err.Error() == "invalid argument" {
+			if *flagV {
+				log.Printf("ignoring windows error %v during kill", err)
+			}
+		} else {
+			panic(err)
+		}
 	}
 
 	if *flagV {

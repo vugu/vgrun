@@ -29,11 +29,12 @@ func TestRWatcher(t *testing.T) {
 	cancel := make(chan struct{}, 1)
 
 	go func() {
+	egress:
 		for {
 			select {
 
 			case <-cancel:
-				break
+				break egress
 
 			case event := <-rw.Events:
 
