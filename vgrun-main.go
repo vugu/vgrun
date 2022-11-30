@@ -188,8 +188,15 @@ func main() {
 
 				case event := <-rwatcher.Events:
 
-					if *flagV {
-						log.Printf("DEBUG: watcher: %q %v", event.Name, event.Op)
+					//if *flagV {
+					//	log.Printf("DEBUG: watcher: %q %v", event.Name, event.Op)
+					//}
+
+					if !watchPattern.MatchString(event.Name) {
+						//	if *flagV {
+						//		log.Printf("ignoring, not matching file")
+						//	}
+						continue
 					}
 
 					switch event.Op {
@@ -197,94 +204,95 @@ func main() {
 					case fsnotify.Remove:
 					case fsnotify.Write:
 					default:
+						//	if *flagV {
+						//		log.Printf("ignoring, not modification event")
+						//	}
 						continue // ignore others
 					}
 
-					if watchPattern.MatchString(event.Name) {
-						var prev_time time.Time // zero value
+					var prev_time time.Time // zero value
 
-						kv, ok := watchedFilesModTime[event.Name]
-						if ok {
-							prev_time = kv
-						}
+					kv, ok := watchedFilesModTime[event.Name]
+					if ok {
+						prev_time = kv
+					}
 
-						st, err := os.Stat(event.Name)
-						if err != nil {
-							if *flagV {
-								log.Printf("stat error on %q: %v, ignoring event", event.Name, err)
-								continue watchLoop
-							}
-						}
-
-						cur_time := st.ModTime()
-						//if *flagV {
-						//	log.Printf("watcher %q, file modification time %s", event.Name, cur_time)
-						//}
-
-						watchedFilesModTime[event.Name] = cur_time
-
-						if cur_time.Sub(prev_time) <= 0 {
-							if *flagV {
-								log.Printf("watcher: %q %v, ignoring, file modification time didn't increase", event.Name, event.Op)
-							}
+					st, err := os.Stat(event.Name)
+					if err != nil {
+						if *flagV {
+							log.Printf("stat error on %q: %v, ignoring event", event.Name, err)
 							continue watchLoop
 						}
+					}
 
+					cur_time := st.ModTime()
+					//if *flagV {
+					//	log.Printf("watcher %q, file modification time %s", event.Name, cur_time)
+					//}
+
+					watchedFilesModTime[event.Name] = cur_time
+
+					if cur_time.Sub(prev_time) <= 0 {
 						if *flagV {
-							log.Printf("watcher: %q %v, rebuilding and restarting...", event.Name, event.Op)
-						} else {
-							log.Printf("Generate and Rebuild: %s", event.Name)
+							log.Printf("watcher: %q %v, ignoring, file modification time didn't increase", event.Name, event.Op)
+						}
+						continue watchLoop
+					}
+
+					if *flagV {
+						log.Printf("watcher: %q %v, rebuilding and restarting...", event.Name, event.Op)
+					} else {
+						log.Printf("Generate and Rebuild: %s", event.Name)
+					}
+
+					// consume anything on the state change channel
+					for len(ru.runStateUpdateCh) > 0 {
+						rs := <-ru.runStateUpdateCh
+						_ = rs
+						// log.Printf("runState changed to: %v", rs)
+					}
+
+					// ask the runner to rebuild and restart
+					ru.runStateChangeReqCh <- runStateChangeReqRebuildAndRestart
+
+					// read its events until it tells us that it restarted
+				waitRunStateChanges:
+					for rs := range ru.runStateUpdateCh {
+						if *flagV {
+							log.Printf("runState changed to: %v", rs)
 						}
 
-						// consume anything on the state change channel
-						for len(ru.runStateUpdateCh) > 0 {
-							rs := <-ru.runStateUpdateCh
-							_ = rs
-							// log.Printf("runState changed to: %v", rs)
-						}
+						switch rs {
 
-						// ask the runner to rebuild and restart
-						ru.runStateChangeReqCh <- runStateChangeReqRebuildAndRestart
-
-						// read its events until it tells us that it restarted
-					waitRunStateChanges:
-						for rs := range ru.runStateUpdateCh {
+						// if rebuild fail we just go back to waiting for events
+						case runStateRebuildFail:
 							if *flagV {
-								log.Printf("runState changed to: %v", rs)
+								log.Printf("DEBUG: Rebuild FAILED, back to watching for changes")
+							}
+							continue watchLoop
+
+						case runStateNone, runStateRebuildSuccess:
+							// doesn't mean anything for us
+							continue
+
+						case runStateRunning: // new DEVSERVER running
+							if *flagV {
+								log.Printf("DEBUG: new devserver running")
 							}
 
-							switch rs {
+							// it's back up, drop through and send message to any browsers listening
 
-							// if rebuild fail we just go back to waiting for events
-							case runStateRebuildFail:
-								if *flagV {
-									log.Printf("DEBUG: Rebuild FAILED, back to watching for changes")
-								}
-								continue watchLoop
-
-							case runStateNone, runStateRebuildSuccess:
-								// doesn't mean anything for us
-								continue
-
-							case runStateRunning:
-								if *flagV {
-									log.Printf("DEBUG: Rebuild complete, draining backlog then starting watching for changes")
-								}
-								// it's back up, drop through and send message to any browsers listening
-								break waitRunStateChanges
-
-							}
+							break waitRunStateChanges
 						}
+					}
 
-						// drain the channel to len 0 before continuing - we don't want a bunch of
-						// file change events stacked up while we were waiting for the build
-						if *flagV {
-							log.Printf("DEBUG: Ignoring %d events queued", len(rwatcher.Events))
-						}
-						for len(rwatcher.Events) > 0 {
-							<-rwatcher.Events
-						}
-
+					// drain file change  channel to len 0 before continuing - we don't want a bunch of
+					// file change events stacked up while we were waiting for the build
+					if *flagV {
+						log.Printf("DEBUG: Ignoring %d watcher events queued", len(rwatcher.Events))
+					}
+					for len(rwatcher.Events) > 0 {
+						<-rwatcher.Events
 					}
 
 				case err := <-rwatcher.Errors:
