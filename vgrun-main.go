@@ -53,6 +53,20 @@ func main() {
 			log.Fatalf("Error installing vugugen: %v; full output:\n%s", err, b)
 		}
 
+		log.Printf("Installing vugufmt")
+		cmd = exec.Command("go", "get", "-u", "github.com/vugu/vugu/cmd/vugufmt")
+		cmd.Env = env
+		b, err = cmd.CombinedOutput()
+		if err != nil {
+			log.Fatalf("Error installing vugufmt: %v; full output:\n%s", err, b)
+		}
+		cmd = exec.Command("go", "install", "github.com/vugu/vugu/cmd/vugufmt")
+		cmd.Env = env
+		b, err = cmd.CombinedOutput()
+		if err != nil {
+			log.Fatalf("Error installing vugufmt: %v; full output:\n%s", err, b)
+		}
+
 		log.Printf("Installing vgrgen")
 		cmd = exec.Command("go", "get", "-u", "github.com/vugu/vgrouter/cmd/vgrgen")
 		cmd.Env = env
